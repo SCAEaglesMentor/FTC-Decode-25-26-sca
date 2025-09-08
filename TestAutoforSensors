@@ -1,0 +1,276 @@
+/*
+ * Copyright (c) 2024 FIRST
+ *
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted (subject to the limitations in the disclaimer below) provided that
+ * the following conditions are met:
+ *
+ * Redistributions of source code must retain the above copyright notice, this list
+ * of conditions and the following disclaimer.
+ *
+ * Redistributions in binary form must reproduce the above copyright notice, this
+ * list of conditions and the following disclaimer in the documentation and/or
+ * other materials provided with the distribution.
+ *
+ * Neither the name of FIRST nor the names of its contributors may be used to
+ * endorse or promote products derived from this software without specific prior
+ * written permission.
+ *
+ * NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY THIS
+ * LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
+ * TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+package org.firstinspires.ftc.teamcode;
+
+import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
+import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.hardware.ColorSensor;
+import com.qualcomm.robotcore.hardware.DcMotor;
+import com.qualcomm.robotcore.hardware.Servo;
+import com.qualcomm.robotcore.util.ElapsedTime;
+
+import org.firstinspires.ftc.robotcore.external.hardware.camera.BuiltinCameraDirection;
+import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
+import org.firstinspires.ftc.vision.VisionPortal;
+import org.firstinspires.ftc.vision.apriltag.AprilTagDetection;
+import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor;
+
+import java.util.List;
+
+@Autonomous(name = "FTC Decode Autonomous", group = "Autonomous")
+public class DecodeAutonomous extends LinearOpMode {
+
+    // Constants
+    private static final int BLUE_GOAL_TAG_ID = 20;
+    private static final int RED_GOAL_TAG_ID = 24;
+    private static final double DESIRED_DISTANCE_FROM_TAG = 12.0; // Inches
+
+    // Hardware
+    private DcMotor leftFrontDrive = null;
+    private DcMotor rightFrontDrive = null;
+    private DcMotor leftBackDrive = null;
+    private DcMotor rightBackDrive = null;
+    private Servo hopperServo = null;
+    private ColorSensor colorSensor1 = null;
+    private ColorSensor colorSensor2 = null;
+    private ColorSensor colorSensor3 = null;
+
+    // Vision
+    private VisionPortal visionPortal;
+    private AprilTagProcessor aprilTag;
+    private AprilTagDetection desiredTag = null;
+
+    // State and Timers
+    private ElapsedTime runtime = new ElapsedTime();
+
+    // Enum for artifact positions
+    public enum ArtifactPosition {
+        POSITION_1,
+        POSITION_2,
+        POSITION_3,
+        UNKNOWN
+    }
+
+    @Override
+    public void runOpMode() {
+        // --- INITIALIZATION ---
+        initializeHardware();
+        initAprilTag();
+
+        // Wait for the game to start (driver presses PLAY)
+        waitForStart();
+
+        if (opModeIsActive()) {
+            // --- AUTONOMOUS SEQUENCE ---
+
+            // 1. Detect the artifact position
+            ArtifactPosition detectedPosition = detectArtifact();
+            telemetry.addData("Detected Artifact Position", detectedPosition);
+            telemetry.update();
+            sleep(1000); // Pause to see telemetry
+
+            // 2. Move hopper based on detected position
+            moveHopper(detectedPosition);
+            telemetry.addData("Hopper Action", "Moved to " + detectedPosition);
+            telemetry.update();
+            sleep(1000);
+
+            // 3. Drive towards a hypothetical AprilTag (e.g., Blue Goal)
+            // This is a simplified driving logic. You would replace this with
+            // more sophisticated pathing from a library like Road Runner.
+            driveTowardsTag(BLUE_GOAL_TAG_ID);
+            telemetry.addData("Navigation", "Attempting to drive to Blue Goal Tag");
+            telemetry.update();
+            sleep(2000);
+
+            // You can add more steps, like shooting, parking, etc.
+        }
+    }
+
+    /**
+     * Initializes all the hardware components on the robot.
+     */
+    private void initializeHardware() {
+        // Initialize Mecanum drive motors
+        leftFrontDrive = hardwareMap.get(DcMotor.class, "leftFrontDrive");
+        rightFrontDrive = hardwareMap.get(DcMotor.class, "rightFrontDrive");
+        leftBackDrive = hardwareMap.get(DcMotor.class, "leftBackDrive");
+        rightBackDrive = hardwareMap.get(DcMotor.class, "rightBackDrive");
+
+        leftFrontDrive.setDirection(DcMotor.Direction.REVERSE);
+        leftBackDrive.setDirection(DcMotor.Direction.REVERSE);
+
+        // Initialize shooter mechanism servo
+        hopperServo = hardwareMap.get(Servo.class, "hopperServo");
+
+        // Initialize color sensors
+        colorSensor1 = hardwareMap.get(ColorSensor.class, "colorSensor1");
+        colorSensor2 = hardwareMap.get(ColorSensor.class, "colorSensor2");
+        colorSensor3 = hardwareMap.get(ColorSensor.class, "colorSensor3");
+
+        telemetry.addData("Status", "Hardware Initialized");
+        telemetry.update();
+    }
+
+    /**
+     * Initializes the AprilTag processor and Vision Portal.
+     */
+    private void initAprilTag() {
+        // Create the AprilTag processor.
+        aprilTag = new AprilTagProcessor.Builder().build();
+
+        // Create the VisionPortal.
+        visionPortal = new VisionPortal.Builder()
+                .setCamera(hardwareMap.get(WebcamName.class, "Webcam 1"))
+                .addProcessor(aprilTag)
+                .build();
+        telemetry.addData("Status", "Vision Initialized");
+        telemetry.update();
+    }
+
+    /**
+     * Detects which of the three positions contains the green artifact.
+     * @return The position of the green artifact.
+     */
+    private ArtifactPosition detectArtifact() {
+        // These threshold values will need tuning based on your lighting and sensor setup
+        final int GREEN_THRESHOLD = 200;
+        final int PURPLE_R_G_DIFF_THRESHOLD = 50; // Purple has more Red and Blue than Green
+
+        // Check Sensor 1
+        if (colorSensor1.green() > GREEN_THRESHOLD && colorSensor1.green() > colorSensor1.red()) {
+            return ArtifactPosition.POSITION_1;
+        }
+
+        // Check Sensor 2
+        if (colorSensor2.green() > GREEN_THRESHOLD && colorSensor2.green() > colorSensor2.red()) {
+            return ArtifactPosition.POSITION_2;
+        }
+
+        // Check Sensor 3
+        if (colorSensor3.green() > GREEN_THRESHOLD && colorSensor3.green() > colorSensor3.red()) {
+            return ArtifactPosition.POSITION_3;
+        }
+
+        // Add logic for purple or no ball if needed. This example prioritizes finding green.
+        // For example, to detect purple:
+        // if (Math.abs(colorSensor1.red() - colorSensor1.blue()) < PURPLE_R_G_DIFF_THRESHOLD && colorSensor1.red() > colorSensor1.green()) {
+        //     // It's likely purple
+        // }
+
+        return ArtifactPosition.UNKNOWN;
+    }
+
+    /**
+     * Moves the hopper servo to the correct position.
+     * @param position The artifact position to align with.
+     */
+    private void moveHopper(ArtifactPosition position) {
+        // These servo positions are placeholders. You will need to find the
+        // correct values for your specific servo and mechanism.
+        final double HOPPER_POS_1 = 0.2;
+        final double HOPPER_POS_2 = 0.5;
+        final double HOPPER_POS_3 = 0.8;
+        final double HOPPER_DEFAULT_POS = 0.0;
+
+        switch (position) {
+            case POSITION_1:
+                hopperServo.setPosition(HOPPER_POS_1);
+                break;
+            case POSITION_2:
+                hopperServo.setPosition(HOPPER_POS_2);
+                break;
+            case POSITION_3:
+                hopperServo.setPosition(HOPPER_POS_3);
+                break;
+            default: // UNKNOWN
+                hopperServo.setPosition(HOPPER_DEFAULT_POS);
+                break;
+        }
+    }
+
+    /**
+     * A simple method to drive towards a specific AprilTag.
+     * This is a placeholder for more advanced navigation.
+     * @param targetTagId The ID of the AprilTag to target.
+     */
+    private void driveTowardsTag(int targetTagId) {
+        runtime.reset();
+        boolean targetFound = false;
+
+        // Loop for up to 5 seconds to find and drive to the tag
+        while (opModeIsActive() && runtime.seconds() < 5.0) {
+            targetFound = false;
+            desiredTag = null;
+
+            // Step through the list of detected tags and look for a matching ID
+            List<AprilTagDetection> currentDetections = aprilTag.getDetections();
+            for (AprilTagDetection detection : currentDetections) {
+                if (detection.metadata != null && detection.id == targetTagId) {
+                    targetFound = true;
+                    desiredTag = detection;
+                    break; // Exit loop once we've found the target
+                }
+            }
+
+            if (targetFound) {
+                telemetry.addData(">", "Found Target Tag ID: " + desiredTag.id);
+
+                // This is where you would calculate motor powers based on desiredTag.ftcPose
+                // (range, bearing, yaw) to align the robot.
+                // For this example, we'll just print the data.
+                double range = desiredTag.ftcPose.range;
+                double bearing = desiredTag.ftcPose.bearing;
+                double yaw = desiredTag.ftcPose.yaw;
+
+                telemetry.addData("Range", "%.2f in", range);
+                telemetry.addData("Bearing", "%.2f deg", bearing);
+                telemetry.addData("Yaw", "%.2f deg", yaw);
+
+                // Example of a simple proportional control loop:
+                // If range > DESIRED_DISTANCE, drive forward.
+                // If bearing is not 0, turn.
+                // If yaw is not 0, strafe.
+                // A real implementation would use a library like Road Runner.
+
+            } else {
+                telemetry.addData(">", "Target Tag Not Found");
+                // Maybe spin to find the tag?
+            }
+
+            telemetry.update();
+            sleep(20); // Small delay to avoid spamming loops
+        }
+    }
+}
